@@ -59,7 +59,26 @@ html{scroll-behavior:smooth}.fade-in{animation:fadeIn .2s ease-out}@keyframes fa
       <div class="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div id="timerBar" class="h-full bg-slate-900" style="width:100%"></div></div>
     </div>
 
-    <textarea id="practiceNotes" rows="5" placeholder="Optional: type your answer here before revealing the model answer..." class="mt-6 w-full rounded-2xl border border-slate-300 p-4 text-sm leading-6"></textarea>
+    <div class="mt-6">
+      <textarea id="practiceNotes" rows="6" placeholder="Type your answer here, or use the microphone below..." class="w-full rounded-2xl border border-slate-300 p-4 text-sm leading-6 outline-none focus:border-slate-700"></textarea>
+
+      <div class="mt-3 flex flex-wrap items-center gap-3">
+        <button id="speechBtn" type="button" class="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700">
+          <span id="speechIcon" aria-hidden="true">🎙️</span>
+          <span id="speechBtnText">Start Speaking</span>
+        </button>
+
+        <button id="clearSpeechBtn" type="button" class="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-bold hover:bg-slate-100">
+          Clear Response
+        </button>
+
+        <span id="speechStatus" class="text-sm font-medium text-slate-500" aria-live="polite">
+          Microphone ready
+        </span>
+      </div>
+
+      <div id="interimTranscript" class="mt-3 hidden rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm italic text-blue-900" aria-live="polite"></div>
+    </div>
 
     <div class="mt-5 flex flex-wrap gap-3">
       <button id="revealBtn" class="rounded-xl bg-slate-900 px-5 py-3 text-sm font-bold text-white">Reveal Answer</button>
@@ -104,12 +123,123 @@ let selectedCategory=saved.selectedCategory||'All';
 let reviewOnly=saved.reviewOnly||false;
 let interviewMode=saved.interviewMode||false;
 let timerId=null,timerRemaining=90;
+let recognition=null;
+let isListening=false;
+let speechBaseText='';
 
 const $=id=>document.getElementById(id);
-const els={categorySelect:$('categorySelect'),categoryBadge:$('categoryBadge'),positionText:$('positionText'),questionText:$('questionText'),answerText:$('answerText'),keyText:$('keyText'),answerPanel:$('answerPanel'),revealBtn:$('revealBtn'),nextBtn:$('nextBtn'),prevBtn:$('prevBtn'),shuffleBtn:$('shuffleBtn'),reviewOnlyBtn:$('reviewOnlyBtn'),masteredBtn:$('masteredBtn'),needsReviewBtn:$('needsReviewBtn'),clearStatusBtn:$('clearStatusBtn'),resetBtn:$('resetBtn'),interviewModeBtn:$('interviewModeBtn'),timerWrap:$('timerWrap'),timerText:$('timerText'),timerBar:$('timerBar'),practiceNotes:$('practiceNotes'),totalCount:$('totalCount'),masteredCount:$('masteredCount'),reviewCount:$('reviewCount'),progressText:$('progressText'),progressBar:$('progressBar')};
+const els={categorySelect:$('categorySelect'),categoryBadge:$('categoryBadge'),positionText:$('positionText'),questionText:$('questionText'),answerText:$('answerText'),keyText:$('keyText'),answerPanel:$('answerPanel'),revealBtn:$('revealBtn'),nextBtn:$('nextBtn'),prevBtn:$('prevBtn'),shuffleBtn:$('shuffleBtn'),reviewOnlyBtn:$('reviewOnlyBtn'),masteredBtn:$('masteredBtn'),needsReviewBtn:$('needsReviewBtn'),clearStatusBtn:$('clearStatusBtn'),resetBtn:$('resetBtn'),interviewModeBtn:$('interviewModeBtn'),timerWrap:$('timerWrap'),timerText:$('timerText'),timerBar:$('timerBar'),practiceNotes:$('practiceNotes'),speechBtn:$('speechBtn'),speechBtnText:$('speechBtnText'),speechIcon:$('speechIcon'),speechStatus:$('speechStatus'),interimTranscript:$('interimTranscript'),clearSpeechBtn:$('clearSpeechBtn'),totalCount:$('totalCount'),masteredCount:$('masteredCount'),reviewCount:$('reviewCount'),progressText:$('progressText'),progressBar:$('progressBar')};
 
 [...new Set(QUESTIONS.map(q=>q.category))].sort().forEach(cat=>{const o=document.createElement('option');o.value=cat;o.textContent=cat;els.categorySelect.appendChild(o)});
 els.categorySelect.value=selectedCategory;
+
+
+function setupSpeechRecognition(){
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  if(!SpeechRecognition){
+    els.speechBtn.disabled=true;
+    els.speechBtn.classList.remove('bg-blue-600','hover:bg-blue-700');
+    els.speechBtn.classList.add('bg-slate-300','cursor-not-allowed');
+    els.speechBtnText.textContent='Speech Not Supported';
+    els.speechStatus.textContent='Use Chrome or Edge for speech-to-text.';
+    return;
+  }
+
+  recognition = new SpeechRecognition();
+  recognition.lang = 'en-CA';
+  recognition.continuous = true;
+  recognition.interimResults = true;
+
+  recognition.onstart = ()=>{
+    isListening=true;
+    speechBaseText=els.practiceNotes.value.trim();
+    els.speechBtn.classList.remove('bg-blue-600','hover:bg-blue-700');
+    els.speechBtn.classList.add('bg-red-600','hover:bg-red-700');
+    els.speechBtnText.textContent='Stop Speaking';
+    els.speechIcon.textContent='⏹️';
+    els.speechStatus.textContent='Listening… speak naturally.';
+  };
+
+  recognition.onresult = event=>{
+    let finalText='';
+    let interimText='';
+
+    for(let i=event.resultIndex;i<event.results.length;i++){
+      const transcript=event.results[i][0].transcript;
+      if(event.results[i].isFinal){
+        finalText += transcript + ' ';
+      }else{
+        interimText += transcript;
+      }
+    }
+
+    if(finalText){
+      const current=els.practiceNotes.value.trim();
+      els.practiceNotes.value = (current ? current + ' ' : '') + finalText.trim();
+    }
+
+    if(interimText.trim()){
+      els.interimTranscript.textContent=interimText.trim();
+      els.interimTranscript.classList.remove('hidden');
+    }else{
+      els.interimTranscript.textContent='';
+      els.interimTranscript.classList.add('hidden');
+    }
+  };
+
+  recognition.onerror = event=>{
+    let message='Speech recognition error.';
+    if(event.error==='not-allowed' || event.error==='service-not-allowed'){
+      message='Microphone permission was blocked. Allow microphone access in your browser.';
+    }else if(event.error==='no-speech'){
+      message='I did not hear anything. Try speaking again.';
+    }else if(event.error==='audio-capture'){
+      message='No working microphone was detected.';
+    }else if(event.error==='network'){
+      message='Speech recognition could not connect. Check your internet connection.';
+    }
+    els.speechStatus.textContent=message;
+  };
+
+  recognition.onend = ()=>{
+    isListening=false;
+    els.speechBtn.classList.remove('bg-red-600','hover:bg-red-700');
+    els.speechBtn.classList.add('bg-blue-600','hover:bg-blue-700');
+    els.speechBtnText.textContent='Start Speaking';
+    els.speechIcon.textContent='🎙️';
+    els.interimTranscript.textContent='';
+    els.interimTranscript.classList.add('hidden');
+
+    if(!els.speechStatus.textContent.includes('blocked') &&
+       !els.speechStatus.textContent.includes('error') &&
+       !els.speechStatus.textContent.includes('microphone') &&
+       !els.speechStatus.textContent.includes('connection')){
+      els.speechStatus.textContent='Stopped. You can edit the transcript before revealing the answer.';
+    }
+  };
+}
+
+function startSpeech(){
+  if(!recognition) return;
+
+  if(isListening){
+    recognition.stop();
+    return;
+  }
+
+  try{
+    recognition.start();
+  }catch(err){
+    els.speechStatus.textContent='Microphone is already starting. Try again in a moment.';
+  }
+}
+
+function stopSpeech(){
+  if(recognition && isListening){
+    recognition.stop();
+  }
+}
 
 function saveState(){localStorage.setItem(stateKey,JSON.stringify({status,order,currentPos,selectedCategory,reviewOnly,interviewMode}))}
 function filteredOrder(){return order.filter(i=>(selectedCategory==='All'||QUESTIONS[i].category===selectedCategory)&&(!reviewOnly||status[i]==='review'))}
@@ -117,6 +247,7 @@ function currentIndex(){const list=filteredOrder();if(!list.length)return null;c
 function updateStats(){const m=Object.values(status).filter(v=>v==='mastered').length,r=Object.values(status).filter(v=>v==='review').length,p=Math.round(((m+r)/QUESTIONS.length)*100);els.masteredCount.textContent=m;els.reviewCount.textContent=r;els.progressText.textContent=p+'%';els.progressBar.style.width=p+'%';els.totalCount.textContent=QUESTIONS.length}
 function resetTimer(){clearInterval(timerId);timerId=null;timerRemaining=90;els.timerText.textContent='01:30';els.timerBar.style.width='100%';if(!interviewMode)return;timerId=setInterval(()=>{timerRemaining--;const m=String(Math.floor(timerRemaining/60)).padStart(2,'0'),s=String(timerRemaining%60).padStart(2,'0');els.timerText.textContent=m+':'+s;els.timerBar.style.width=((timerRemaining/90)*100)+'%';if(timerRemaining<=0){clearInterval(timerId);timerId=null;els.timerText.textContent='TIME'}},1000)}
 function render(){
+ stopSpeech();
  const list=filteredOrder();updateStats();
  els.reviewOnlyBtn.textContent=reviewOnly?'Show All':'Review Only';
  els.interviewModeBtn.textContent=interviewMode?'Exit Interview Mode':'Interview Mode';
@@ -126,7 +257,9 @@ function render(){
  const idx=list[currentPos],q=QUESTIONS[idx];els.revealBtn.disabled=false;els.categoryBadge.textContent=q.category;els.positionText.textContent=`${currentPos+1} / ${list.length}`;els.questionText.textContent=q.question;els.answerText.textContent=q.answer;els.keyText.textContent=q.key;els.answerPanel.classList.add('hidden');els.practiceNotes.value='';resetTimer();
  const s=status[idx];els.categoryBadge.className='rounded-full px-3 py-1 text-xs font-bold '+(s==='mastered'?'bg-emerald-100 text-emerald-700':s==='review'?'bg-amber-100 text-amber-700':'bg-slate-100 text-slate-600');saveState()
 }
-els.revealBtn.onclick=()=>{els.answerPanel.classList.remove('hidden');clearInterval(timerId)};
+els.revealBtn.onclick=()=>{stopSpeech();els.answerPanel.classList.remove('hidden');clearInterval(timerId)};
+els.speechBtn.onclick=()=>startSpeech();
+els.clearSpeechBtn.onclick=()=>{stopSpeech();els.practiceNotes.value='';els.interimTranscript.textContent='';els.interimTranscript.classList.add('hidden');els.speechStatus.textContent='Response cleared. Microphone ready.'};
 els.nextBtn.onclick=()=>{const l=filteredOrder();if(l.length){currentPos=(currentPos+1)%l.length;render()}};
 els.prevBtn.onclick=()=>{const l=filteredOrder();if(l.length){currentPos=(currentPos-1+l.length)%l.length;render()}};
 els.categorySelect.onchange=e=>{selectedCategory=e.target.value;currentPos=0;render()};
@@ -138,6 +271,7 @@ els.clearStatusBtn.onclick=()=>{const i=currentIndex();if(i!==null){delete statu
 els.interviewModeBtn.onclick=()=>{interviewMode=!interviewMode;render()};
 els.resetBtn.onclick=()=>{if(confirm('Reset all progress, filters, and question order?')){Object.keys(status).forEach(k=>delete status[k]);order=QUESTIONS.map((_,i)=>i);currentPos=0;selectedCategory='All';reviewOnly=false;interviewMode=false;els.categorySelect.value='All';localStorage.removeItem(stateKey);render()}};
 document.addEventListener('keydown',e=>{if(['TEXTAREA','SELECT'].includes(e.target.tagName))return;if(e.key==='ArrowRight')els.nextBtn.click();if(e.key==='ArrowLeft')els.prevBtn.click();if(e.key===' '||e.key==='Enter'){e.preventDefault();els.revealBtn.click()}});
+setupSpeechRecognition();
 render();
 </script>
 </body></html>
